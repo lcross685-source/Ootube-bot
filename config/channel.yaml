@@ -1,0 +1,121 @@
+# Channel-level settings. Secrets are NEVER stored here - see docs/SETUP.md.
+
+channel:
+  name: ootube
+  default_language: en
+  made_for_kids: false
+  # Required disclosure when narration or visuals are synthetic.
+  contains_synthetic_media: true
+  # Flip to true to hold every video in a review queue before it uploads.
+  # Recommended for the first ~30 videos and permanently for `sensitive` niches.
+  require_human_approval: false
+  description_footer: |
+    ---
+    Chapters and sources are listed above. Corrections are pinned in the
+    comments when something changes after publication.
+
+    Nothing in this video is financial, legal, or medical advice.
+
+db_path: data/ootube.db
+
+# ---------------------------------------------------------------------------
+# Freshness: the anti-stale gate.
+#
+# This is what stops the channel publishing "Samsung Galaxy S23 launch" two
+# years after the launch. Three independent rules must all pass:
+#   1. the signal must be recent          (max_signal_age_hours)
+#   2. the underlying event must be recent (max_event_age_days)
+#   3. the subject must not be superseded  (reject_superseded_generations)
+# ---------------------------------------------------------------------------
+freshness:
+  max_signal_age_hours: 48
+  max_event_age_days: 14
+  evergreen_max_event_age_days: 365
+  max_claim_age_days: 30
+  require_event_date_for_news: true
+  reject_superseded_generations: true
+  # Reject topics whose text anchors to a year older than (current year - N).
+  max_year_reference_lag: 1
+  min_sources_for_news: 1
+  stale_terms:
+    - retrospective
+    - "years ago"
+    - throwback
+    - "a look back"
+
+scoring:
+  weight_demand: 1.0
+  weight_rpm: 1.2
+  weight_freshness: 1.5
+  weight_saturation: 0.8
+  baseline_views: 1200
+  monetized_playback_rate: 0.55
+  min_score: 0.25
+
+schedule:
+  timezone: America/New_York
+  videos_per_day: 2
+  publish_hours_local: [9, 17]
+  min_gap_hours: 4
+  lead_time_hours: 2
+  max_queue_days: 5
+  backfill_when_short: true
+
+# YouTube Data API budget. Costs are configurable because Google has changed
+# them: uploads used to cost 1600 units from the shared daily pool and are now
+# billed per call against a separate cap. Verify against the current quota docs
+# and edit here - no code change needed.
+quota:
+  daily_units: 10000
+  upload_calls_per_day: 100
+  search_calls_per_day: 100
+  cost_videos_insert: 1
+  cost_search_list: 100
+  cost_videos_list: 1
+  cost_playlist_items_insert: 50
+  cost_thumbnails_set: 50
+  reserve_units: 500
+
+media:
+  tts_provider: edge
+  tts_voice: en-US-AndrewMultilingualNeural
+  words_per_minute: 155
+  width: 1920
+  height: 1080
+  fps: 30
+  target_duration_s: 480
+  min_duration_s: 180
+  output_dir: out
+  broll_provider: pexels
+  music_volume: 0.06
+
+script:
+  provider: anthropic
+  model: claude-opus-5
+  max_tokens: 8000
+  temperature: 0.7
+  min_words: 450
+  max_words: 1400
+  require_original_analysis: true
+  min_claims_with_sources: 3
+
+# Trend sources. Ordered cheapest-first; `search.list` is deliberately absent
+# because it costs 100 units per call against a 100-call daily cap.
+sources:
+  google_trends:
+    enabled: true
+    geo: US
+  youtube_charts:
+    enabled: true
+    regions: [US]
+    max_results: 50
+  reddit:
+    enabled: true
+    listing: rising
+    limit: 25
+  hackernews:
+    enabled: true
+    min_points: 80
+  rss:
+    enabled: true
+    max_items_per_feed: 20

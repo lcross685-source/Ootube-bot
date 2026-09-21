@@ -1,0 +1,25 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Secrets - never commit
+.env
+client_secret*.json
+token*.json
+*.pickle
+credentials/
+
+# Generated state and artifacts
+data/*.db
+data/*.db-journal
+build/
+out/
+renders/
+*.mp4
+*.wav
+*.mp3

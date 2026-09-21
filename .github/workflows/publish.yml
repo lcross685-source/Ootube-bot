@@ -1,0 +1,141 @@
+name: publish
+
+# Twice daily. Uploads land as private videos with a future publishAt, so the
+# channel's public cadence does not depend on when this workflow happens to
+# run - or on it running at all on a given day, since the queue holds several
+# days of scheduled videos.
+on:
+  schedule:
+    - cron: "0 12 * * *"   # 08:00 America/New_York (EDT)
+    - cron: "0 20 * * *"   # 16:00 America/New_York (EDT)
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Max videos to produce this run"
+        required: false
+        default: ""
+      dry_run:
+        description: "Produce videos but do not upload"
+        type: boolean
+        default: false
+
+concurrency:
+  # Two overlapping runs would double-book publish slots and burn quota twice.
+  group: ootube-publish
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # State (what has been published, quota spent, product generations
+      # learned) lives on an orphan branch so it survives across runs without
+      # cluttering the code history.
+      - name: Restore bot state
+        run: |
+          git config user.name "ootube-bot"
+          git config user.email "ootube-bot@users.noreply.github.com"
+          mkdir -p data
+          if git ls-remote --exit-code --heads origin bot-state >/dev/null 2>&1; then
+            git fetch origin bot-state --depth=1
+            git show origin/bot-state:ootube.db > data/ootube.db 2>/dev/null \
+              || echo "no state file yet; starting fresh"
+          else
+            echo "no bot-state branch yet; starting fresh"
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Install ootube
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[publish,script,media]" edge-tts
+
+      - name: Preflight
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+        run: ootube doctor
+
+      - name: Run
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+        run: |
+          ARGS=""
+          if [ -n "${{ inputs.limit }}" ]; then ARGS="$ARGS --limit ${{ inputs.limit }}"; fi
+          if [ "${{ inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+          ootube run $ARGS --json | tee run-report.json
+
+      - name: Save bot state
+        # Runs even on failure: quota already spent must still be recorded, or
+        # the next run will overspend against a stale count.
+        if: always()
+        run: |
+          if [ ! -f data/ootube.db ]; then exit 0; fi
+          TMP=$(mktemp -d)
+          cp data/ootube.db "$TMP/ootube.db"
+          git checkout --orphan bot-state-tmp
+          git rm -rf --cached . >/dev/null 2>&1 || true
+          find . -maxdepth 1 -not -name .git -not -name . -exec rm -rf {} + 2>/dev/null || true
+          cp "$TMP/ootube.db" ootube.db
+          git add ootube.db
+          git commit -m "state: $(date -u +%Y-%m-%dT%H:%M:%SZ)" || exit 0
+          git push -f origin bot-state-tmp:bot-state
+
+      - name: Upload run artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-${{ github.run_id }}
+          path: |
+            run-report.json
+            out/**/script.json
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Report failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // One open issue, reused. A new issue per failed run would bury
+            // the signal under duplicates.
+            const title = "ootube: publish run failing";
+            const body = `Run [${context.runId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) failed at ${new Date().toISOString()}.`;
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: "open", labels: "ootube-failure",
+            });
+            if (existing.data.length) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: existing.data[0].number, body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo,
+                title, body, labels: ["ootube-failure"],
+              });
+            }

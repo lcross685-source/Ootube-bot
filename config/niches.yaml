@@ -1,0 +1,109 @@
+# Content verticals, ordered by revenue density.
+#
+# rpm_usd = USD revenue per 1000 monetized playbacks. These are planning
+# estimates for a US-majority audience; the pipeline overwrites them with your
+# real numbers once `ootube calibrate` has YouTube Analytics history to read.
+#
+# Niche choice is the single largest revenue lever here. A finance video and a
+# gaming video with identical view counts differ by roughly an order of
+# magnitude in payout, so the scorer weights RPM directly.
+#
+# `sensitive: true` marks verticals where YouTube's inauthentic-content policy
+# specifically calls out AI personas discussing the subject matter (health,
+# finance). Those videos are routed through human approval and carry an
+# explicit not-advice disclaimer rather than being fully hands-off.
+
+niches:
+  - name: business-software
+    rpm_usd: 18.0
+    weight: 1.3
+    youtube_category_id: "28"
+    keywords:
+      - saas
+      - b2b software
+      - crm
+      - erp
+      - productivity software
+      - enterprise ai
+      - workflow automation
+    subreddits: [SaaS, msp, sysadmin, ExperiencedDevs, Entrepreneur]
+    rss_feeds:
+      - https://techcrunch.com/category/enterprise/feed/
+      - https://www.theverge.com/rss/index.xml
+    affiliate_block: |
+      Tools mentioned (some links are affiliate links, which support the channel
+      at no extra cost to you):
+
+  - name: ai-tools
+    rpm_usd: 14.0
+    weight: 1.4
+    youtube_category_id: "28"
+    keywords:
+      - ai tool
+      - llm
+      - ai model release
+      - ai agent
+      - ai coding
+      - open source model
+    subreddits: [LocalLLaMA, singularity, OpenAI, ArtificialInteligence, ChatGPTCoding]
+    rss_feeds:
+      - https://techcrunch.com/category/artificial-intelligence/feed/
+      - https://venturebeat.com/category/ai/feed/
+    affiliate_block: |
+      Tools and models covered in this video:
+
+  - name: personal-finance
+    rpm_usd: 22.0
+    weight: 1.1
+    youtube_category_id: "25"
+    sensitive: true
+    keywords:
+      - interest rates
+      - inflation report
+      - stock market
+      - earnings
+      - index funds
+      - housing market
+      - tax rules
+    subreddits: [personalfinance, investing, stocks, financialindependence]
+    rss_feeds:
+      - https://www.cnbc.com/id/100003114/device/rss/rss.html
+      - https://feeds.content.dowjones.io/public/rss/mw_topstories
+    affiliate_block: |
+      Resources referenced in this video:
+
+  - name: consumer-tech
+    rpm_usd: 9.0
+    weight: 1.2
+    youtube_category_id: "28"
+    keywords:
+      - smartphone launch
+      - laptop review
+      - gpu
+      - wearables
+      - console
+      - chipset
+    subreddits: [gadgets, hardware, Android, apple, buildapc]
+    rss_feeds:
+      - https://www.theverge.com/rss/index.xml
+      - https://feeds.arstechnica.com/arstechnica/gadgets
+    affiliate_block: |
+      Gear mentioned (affiliate links support the channel at no cost to you):
+
+  - name: software-dev
+    rpm_usd: 12.0
+    weight: 1.0
+    youtube_category_id: "28"
+    keywords:
+      - framework release
+      - programming language
+      - developer tools
+      - cloud platform
+      - security vulnerability
+      - database
+    subreddits: [programming, devops, webdev, rust, golang]
+    rss_feeds:
+      - https://github.blog/feed/
+      - https://feeds.arstechnica.com/arstechnica/technology-lab
+    affiliate_block: |
+      Referenced in this video:
