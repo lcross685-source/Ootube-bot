@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import struct
 import subprocess
 import wave
+from dataclasses import dataclass
 from pathlib import Path
 
 from ..config import MediaConfig
@@ -163,3 +165,112 @@ def synthesize(text: str, out_path: str | Path, cfg: MediaConfig) -> float:
         raise TTSError(f"{provider} produced no audio at {path}")
     log.info("tts(%s) -> %s (%.1fs)", provider, path, duration)
     return duration
+
+def probe_has_audio(path: str | Path, cfg: MediaConfig) -> bool:
+    """True if the file carries at least one audio stream.
+
+    Stock footage often ships with ambience. The timeline leaves it off - it
+    competes with narration - but the project file should still describe the
+    source accurately so the editor can pull source audio up if they want it.
+    """
+    exe = shutil.which(cfg.ffprobe_bin)
+    if not exe:
+        return False
+    result = subprocess.run(
+        [exe, "-v", "error", "-select_streams", "a",
+         "-show_entries", "stream=index", "-of", "csv=p=0", str(path)],
+        capture_output=True, text=True, timeout=60,
+    )
+    return result.returncode == 0 and bool(result.stdout.strip())
+
+
+# --------------------------------------------------------------------------
+@dataclass
+class SpokenClip:
+    """One synthesized narration block and where it lands on the timeline.
+
+    Per-section synthesis is what makes an editable timeline possible: a single
+    narration blob gives one immovable clip, while per-section files give the
+    editor blocks they can reorder, trim or drop, and give the b-roll real
+    boundaries to cut against.
+    """
+
+    index: int
+    heading: str
+    text: str
+    path: Path
+    duration: float
+    start: float = 0.0
+
+    @property
+    def end(self) -> float:
+        return self.start + self.duration
+
+
+_SENTENCE_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'])")
+
+
+def split_sentences(text: str) -> list[str]:
+    """Split narration into sentences for caption and marker timing."""
+    parts = [p.strip() for p in _SENTENCE_RE.split((text or "").strip()) if p.strip()]
+    return parts or ([text.strip()] if (text or "").strip() else [])
+
+
+def sentence_timings(
+    clip: "SpokenClip", words_per_minute: int
+) -> list[tuple[float, float, str]]:
+    """Distribute a clip's real duration across its sentences by word count.
+
+    Approximate by construction. Most TTS providers do not return word
+    boundaries, so sentence starts are interpolated within a section whose
+    total duration *is* measured. Good enough to seed captions and cut markers
+    that the editor nudges; not frame-accurate, and the edit notes say so.
+    """
+    sentences = split_sentences(clip.text)
+    if not sentences or clip.duration <= 0:
+        return []
+    weights = [max(1, len(s.split())) for s in sentences]
+    total = sum(weights)
+    out: list[tuple[float, float, str]] = []
+    cursor = clip.start
+    for sentence, weight in zip(sentences, weights):
+        span = clip.duration * weight / total
+        out.append((cursor, cursor + span, sentence))
+        cursor += span
+    return out
+
+
+def synthesize_sections(
+    blocks: list[tuple[str, str]],
+    out_dir: str | Path,
+    cfg: MediaConfig,
+    *,
+    gap_s: float = 0.35,
+) -> list[SpokenClip]:
+    """Synthesize each ``(heading, text)`` block to its own audio file.
+
+    ``gap_s`` inserts breathing room between blocks on the timeline. It is
+    deliberately small - the editor tightens or widens it, and a gap that is
+    already there is easier to close than one that has to be created.
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    clips: list[SpokenClip] = []
+    cursor = 0.0
+    for index, (heading, text) in enumerate(blocks):
+        if not (text or "").strip():
+            continue
+        path = out_dir / f"vo_{index:02d}.wav"
+        duration = synthesize(text, path, cfg)
+        clip = SpokenClip(
+            index=index,
+            heading=heading or f"Section {index}",
+            text=text.strip(),
+            path=path,
+            duration=duration,
+            start=cursor,
+        )
+        clips.append(clip)
+        cursor += duration + gap_s
+    return clips

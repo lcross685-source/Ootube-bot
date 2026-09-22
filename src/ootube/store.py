@@ -68,15 +68,22 @@ CREATE TABLE IF NOT EXISTS runs (
     detail        TEXT DEFAULT ''
 );
 
-CREATE TABLE IF NOT EXISTS approvals (
-    fingerprint   TEXT PRIMARY KEY,
-    topic_key     TEXT,
+-- A drafted edit package awaiting a human edit. Tracked so runs do not
+-- out-pace editing: a backlog of stale packages is worse than none, because
+-- a topic that was current on Monday is not on Friday.
+CREATE TABLE IF NOT EXISTS drafts (
+    topic_key     TEXT PRIMARY KEY,
+    fingerprint   TEXT,
     title         TEXT,
-    created_at    TEXT,
-    decision      TEXT DEFAULT 'pending',
-    payload       TEXT DEFAULT '{}'
+    directory     TEXT,
+    niche         TEXT,
+    drafted_at    TEXT NOT NULL,
+    duration_s    REAL DEFAULT 0,
+    missing_broll INTEGER DEFAULT 0,
+    status        TEXT DEFAULT 'pending'
 );
 
+CREATE INDEX IF NOT EXISTS idx_drafts_status ON drafts(status);
 CREATE INDEX IF NOT EXISTS idx_published_uploaded ON published(uploaded_at);
 CREATE INDEX IF NOT EXISTS idx_published_sched   ON published(scheduled_for);
 CREATE INDEX IF NOT EXISTS idx_topics_status     ON topics(status);
@@ -130,6 +137,29 @@ class Store:
             raise
 
     # ---------------------------------------------------------------- topics
+    def _set_topic_status(
+        self, conn: sqlite3.Connection, topic: Topic, status: str
+    ) -> None:
+        """Upsert a topic row at the given status.
+
+        A plain UPDATE silently matches nothing when the topic was never
+        recorded - which happens whenever a topic is acted on without having
+        gone through selection first - leaving its status unreadable
+        afterwards. Every status change goes through here.
+        """
+        now = _iso(utcnow())
+        conn.execute(
+            """
+            INSERT INTO topics (fingerprint, term, niche, first_seen, last_seen,
+                                score, status, reason, payload)
+            VALUES (?,?,?,?,?,?,?,'','{}')
+            ON CONFLICT(fingerprint) DO UPDATE SET
+                status    = excluded.status,
+                last_seen = excluded.last_seen
+            """,
+            (topic.fingerprint, topic.term, topic.niche, now, now, topic.score, status),
+        )
+
     def record_topic(self, topic: Topic, status: str = "seen", reason: str = "") -> None:
         now = _iso(utcnow())
         payload = json.dumps(
@@ -211,24 +241,7 @@ class Store:
                     int(dry_run),
                 ),
             )
-            # Upsert rather than update: a topic published without having
-            # been recorded first would otherwise leave no row at all, so its
-            # status would silently read back as unknown.
-            now = _iso(utcnow())
-            conn.execute(
-                """
-                INSERT INTO topics (fingerprint, term, niche, first_seen, last_seen,
-                                    score, status, reason, payload)
-                VALUES (?,?,?,?,?,?, 'published', '', '{}')
-                ON CONFLICT(fingerprint) DO UPDATE SET
-                    status    = 'published',
-                    last_seen = excluded.last_seen
-                """,
-                (
-                    topic.fingerprint, topic.term, topic.niche,
-                    now, now, topic.score,
-                ),
-            )
+            self._set_topic_status(conn, topic, "published")
 
     def is_published(self, fingerprint: str) -> bool:
         row = self._conn.execute(
@@ -318,30 +331,68 @@ class Store:
         rows = self._conn.execute("SELECT family, latest FROM generations").fetchall()
         return {r["family"]: float(r["latest"]) for r in rows}
 
-    # -------------------------------------------------------------- approval
-    def queue_approval(self, topic: Topic, title: str, payload: dict[str, Any]) -> None:
+    # ---------------------------------------------------------------- drafts
+    def record_draft(self, topic: Topic, title: str, package: Any) -> None:
         with self._tx() as conn:
             conn.execute(
                 """
-                INSERT OR REPLACE INTO approvals
-                    (fingerprint, topic_key, title, created_at, decision, payload)
-                VALUES (?,?,?,?,'pending',?)
+                INSERT OR REPLACE INTO drafts
+                    (topic_key, fingerprint, title, directory, niche,
+                     drafted_at, duration_s, missing_broll, status)
+                VALUES (?,?,?,?,?,?,?,?,'pending')
                 """,
-                (topic.fingerprint, topic.key, title, _iso(utcnow()), json.dumps(payload)),
+                (
+                    topic.key, topic.fingerprint, title, package.directory,
+                    topic.niche, _iso(utcnow()),
+                    getattr(package, "duration_s", 0.0),
+                    len(getattr(package, "missing_broll", []) or []),
+                ),
             )
+            self._set_topic_status(conn, topic, "drafted")
 
-    def pending_approvals(self) -> list[sqlite3.Row]:
+    def has_draft(self, fingerprint: str) -> bool:
+        """True if this topic has ever been drafted.
+
+        Checked separately from :meth:`is_published` because a package sits in
+        the drafts table for as long as it takes a human to cut it. Without
+        this, every run re-drafts whatever has not been published yet - paying
+        for the script and the footage again and littering the output folder
+        with duplicates. A discarded draft also counts: the operator already
+        said no to that topic.
+        """
+        row = self._conn.execute(
+            "SELECT 1 FROM drafts WHERE fingerprint = ? LIMIT 1", (fingerprint,)
+        ).fetchone()
+        return row is not None
+
+    def get_draft(self, topic_key: str) -> sqlite3.Row | None:
+        return self._conn.execute(
+            "SELECT * FROM drafts WHERE topic_key = ?", (topic_key,)
+        ).fetchone()
+
+    def pending_drafts(self) -> list[sqlite3.Row]:
         return list(
             self._conn.execute(
-                "SELECT * FROM approvals WHERE decision='pending' ORDER BY created_at"
+                "SELECT * FROM drafts WHERE status='pending' ORDER BY drafted_at"
             )
         )
 
-    def decide_approval(self, fingerprint: str, decision: str) -> None:
+    def pending_draft_count(self) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) AS n FROM drafts WHERE status='pending'"
+        ).fetchone()
+        return int(row["n"]) if row else 0
+
+    def mark_draft_published(self, topic_key: str) -> None:
         with self._tx() as conn:
             conn.execute(
-                "UPDATE approvals SET decision = ? WHERE fingerprint = ?",
-                (decision, fingerprint),
+                "UPDATE drafts SET status='published' WHERE topic_key = ?", (topic_key,)
+            )
+
+    def discard_draft(self, topic_key: str) -> None:
+        with self._tx() as conn:
+            conn.execute(
+                "UPDATE drafts SET status='discarded' WHERE topic_key = ?", (topic_key,)
             )
 
     # ------------------------------------------------------------------ runs

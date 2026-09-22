@@ -11,9 +11,15 @@ Partner Program**, which has subscriber and watch-time thresholds. Nothing
 here shortcuts that. Expect the first stretch to earn nothing while the
 channel builds the history that qualifies it.
 
-What automation genuinely buys you is *consistency* — publishing on a fixed
-cadence for months without the motivation collapse that ends most channels.
-That is a real advantage, but it compounds slowly.
+What automation genuinely buys you here is *time per video*. Research,
+scripting, narration, footage gathering and rough assembly are the slow,
+repetitive parts; the pipeline does those and hands you an edit. What is left
+is the part that actually differentiates a video, and it is the part worth
+spending your hours on.
+
+The realistic constraint becomes your editing throughput, not idea supply.
+That is why drafting throttles itself against your backlog: a queue of stale
+packages is not progress.
 
 ## Why niche choice dominates
 

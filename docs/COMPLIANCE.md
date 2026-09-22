@@ -1,8 +1,17 @@
 # Compliance
 
-Read this before turning on unattended publishing. The risk to an automated
-channel is not a copyright strike — it is demonetisation or termination under
-YouTube's **inauthentic content** policy.
+The risk to an automated channel is not a copyright strike — it is
+demonetisation or termination under YouTube's **inauthentic content** policy.
+
+**This workflow is in good shape on that front, and the reason is the human
+edit.** The policy targets content that can be replicated at scale with little
+human input. A pipeline that drafts a timeline and stops, leaving a person to
+cut, restructure and approve every video, is not that. The editing step is not
+just a quality gate — it is the single thing that most clearly distinguishes
+this from what gets channels terminated.
+
+That protection only holds if the edit is real. Importing the project and
+exporting it unchanged puts you straight back in the target category.
 
 ## What the policy targets
 
@@ -38,7 +47,8 @@ watching and adds something**.
 | Sourced and current | Every factual claim needs a source URL and a date inside the freshness window. Undated or stale claims fail the build. |
 | Not repetitive | Dedupe by topic fingerprint plus a near-duplicate check against 30 days of published titles. |
 | Disclosure | Uploads set `status.containsSyntheticMedia` — the API equivalent of the Studio toggle — and the description carries a plain-language disclosure line. |
-| Sensitive topics | Niches marked `sensitive: true` (finance, health) route to human approval and carry a not-advice disclaimer, rather than an AI persona giving advice. |
+| Sensitive topics | Niches marked `sensitive: true` (finance, health) carry a not-advice disclaimer. Since you edit every video, you are the reviewer. |
+| Human input | Structural. The pipeline cannot publish; `ootube publish` only accepts a file you exported. |
 
 The verifier **fails closed**: a script that cannot be verified is dropped
 rather than published. A skipped video costs one slot; a wrong one costs
@@ -48,27 +58,37 @@ channel trust, and potentially monetisation.
 
 This is the honest part.
 
-**Volume is a risk multiplier.** Ten thoughtful videos a week is a different
-risk profile from a hundred. `videos_per_day` defaults to 2 deliberately.
-Raising it materially raises your exposure.
+**The disclosure line must be true.** The default says research and editorial
+judgement are human-reviewed. With this workflow that is accurate — provided
+you actually review the claims in `EDIT_NOTES.md` rather than just trimming
+the timeline. Every claim is listed with its dated source precisely so that
+checking them is quick.
 
-**"Reviewed by a human editor" must be true.** The default disclosure line
-says research and editorial judgement are human-reviewed. If you publish fully
-hands-off, that line is false — either review the output or change the line.
+**An unchanged export is still mass-produced content.** The protection comes
+from the edit, not from the existence of an editing step. If a draft is not
+worth cutting, discard it; publishing it unchanged is worse than publishing
+nothing.
 
-**A fully unattended channel is the exact profile under scrutiny.** The
-realistic posture is not "never look at it" but "look at it briefly and
-regularly". Watch the first thirty videos end to end. Afterwards, spot-check.
+**Volume is still a risk multiplier.** `videos_per_day` defaults to 2, and the
+backlog throttle stops drafting when unedited packages pile up. Both are
+deliberate. If you find yourself exporting drafts with minimal changes to keep
+up, the cadence is too high.
+
+**You are responsible for the facts.** The verifier checks that claims are
+sourced and current; it cannot check that they are *true*. The model can be
+confidently wrong. Your name is on the video.
 
 ## Recommended posture
 
-**First 30 videos** — `require_human_approval: true`, watch each one fully,
-delete anything you would not put your name on. You are calibrating whether
-the niche, prompts and sources produce something worth publishing.
+**First 30 videos** — cut each draft properly and verify every claim against
+its source. You are calibrating whether the niche, prompts and sources produce
+material worth your editing time. If they do not, change the niche rather than
+lowering the bar.
 
-**Ongoing** — keep approval on for `sensitive` niches permanently. Spot-check
-a couple per week. Read the rejection log in `ootube plan` occasionally; a
-sudden spike in one rule usually means a source broke.
+**Ongoing** — verify claims in regulated niches every time, not just at the
+start. Read the rejection log in `ootube plan` occasionally; a sudden spike in
+one rule usually means a source broke. Discard drafts freely — `ootube
+discard` exists so that "this one is not worth it" is a cheap decision.
 
 **Always** — respond to comments correcting factual errors, and pin
 corrections. Keep the sourced-claims archive (`out/<topic>/script.json`);

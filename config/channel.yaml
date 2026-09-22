@@ -6,9 +6,6 @@ channel:
   made_for_kids: false
   # Required disclosure when narration or visuals are synthetic.
   contains_synthetic_media: true
-  # Flip to true to hold every video in a review queue before it uploads.
-  # Recommended for the first ~30 videos and permanently for `sensitive` niches.
-  require_human_approval: false
   description_footer: |
     ---
     Chapters and sources are listed above. Corrections are pinned in the
@@ -88,6 +85,15 @@ media:
   output_dir: out
   broll_provider: pexels
   music_volume: 0.06
+
+  # --- edit package ---
+  # Gap between narration sections on the timeline, in seconds.
+  section_gap_s: 0.35
+  # Marker at each sentence boundary, as suggested cut points.
+  sentence_markers: true
+  # Also render a watchable rough cut (slow). The project file is the
+  # deliverable; the preview is only to check pacing before opening the NLE.
+  render_preview: false
 
 script:
   provider: anthropic

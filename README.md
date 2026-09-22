@@ -1,25 +1,82 @@
 # ootube
 
-An autonomous YouTube channel operator: it finds what is trending right now,
-rejects anything stale, writes and renders a video, and schedules it to
-publish on a fixed cadence. It optimises for **revenue**, not views, and it is
-built to run unattended on a cron.
+Press a button, get the first 80% of a video edit. It finds what is trending
+right now, rejects anything stale, writes and fact-checks a script, narrates
+it, pulls footage, and hands you a **Premiere project with the timeline already
+built**. You cut it down and publish.
 
 ```
-trends ──▶ freshness gate ──▶ revenue scoring ──▶ script + verify ──▶ render ──▶ schedule
- 5 sources   4 blocking rules    RPM-weighted       originality        ffmpeg     publishAt
+trends ──▶ freshness gate ──▶ revenue scoring ──▶ script + verify ──▶ EDIT PACKAGE
+ 5 sources   4 blocking rules    RPM-weighted       originality       ↓
+                                                              you cut it in Premiere
+                                                                      ↓
+                                                        ootube publish ──▶ scheduled
 ```
 
-## The problem this is built around
+**It never publishes on its own.** `ootube run` stops at a project file.
+Uploading is a separate command that takes *your* export. That split is the
+design: the tedious work is automated, the judgement stays yours.
 
-Most auto-upload channels fail in one of three ways. Each has a specific
-countermeasure here.
+## What you get per video
 
-**They publish stale content.** "Trending" and "current" are different
-questions. A publisher can run a fresh article about a two-year-old phone,
-giving a recent signal with an ancient subject. The
-[freshness gate](src/ootube/freshness.py) applies four independent rules and a
-topic must pass all of them:
+```
+out/<topic>/
+  project.xml      <- import into Premiere (File > Import). Resolve reads it too
+  project.edl      <- fallback if the XML misbehaves
+  captions.srt     <- drag onto the timeline
+  EDIT_NOTES.md    <- shot list, sources, what to fix first
+  metadata.json    <- title/tags/description, editable, used at publish
+  thumbnail.jpg
+  audio/vo_*.wav   <- narration, one file per section
+  broll/*.mp4
+```
+
+Open `project.xml` and the sequence is already laid out:
+
+- **A1** — narration, **one clip per section**, so you can move, trim or drop
+  blocks independently rather than fighting one immovable audio blob.
+- **V1** — b-roll cut to the narration. A section with no usable clip is left
+  as a **visible gap**, not padded, because an empty span is the clearest
+  possible instruction.
+- **A2** — empty, reserved for music.
+- **Markers** — section starts, a `cut point` at every sentence boundary,
+  `CITE` where a claim needs an on-screen source, `NO B-ROLL` where footage is
+  missing, `B-ROLL REPEATS` where a short clip is looping.
+
+`EDIT_NOTES.md` opens with a "do these first" list, then the shot list with
+timecodes, then every factual claim with its dated source so you can verify
+anything before your name goes on it.
+
+> The format matters: Premiere imports `.xml` (the FCP7 schema) and does **not**
+> import `.fcpxml`. This writes the one both Premiere and Resolve read.
+
+## Quick start
+
+```bash
+pip install -e ".[publish,script,media]" edge-tts
+sudo apt-get install ffmpeg        # brew install ffmpeg on macOS
+
+ootube doctor          # what is configured, what is missing
+ootube plan            # what it would draft, and why it rejected the rest
+ootube run --limit 1   # draft one edit package
+ootube drafts          # list packages waiting to be cut
+```
+
+Then open `out/<topic>/project.xml` in Premiere, cut it, export, and:
+
+```bash
+ootube publish <topic-key> --video ~/exports/final.mp4
+```
+
+It uploads private with a scheduled `publishAt`, so the channel keeps a steady
+public cadence regardless of when you finished editing.
+
+## Why the rest of the pipeline exists
+
+**Stale topics.** "Trending" and "current" are different questions — a
+publisher can run a fresh article about a two-year-old product, giving a recent
+signal with a dead subject. The [freshness gate](src/ootube/freshness.py)
+applies four independent rules and a topic must pass all of them:
 
 | Rule | Catches |
 |---|---|
@@ -28,120 +85,79 @@ topic must pass all of them:
 | Supersession | A subject that has since been replaced |
 | Anchor text | Titles pointing at an old year, or framed as history |
 
-Supersession is the one that does the real work. The bot learns product
-generations from the signals it sees — spot one "Galaxy S25" headline and
-every S23 topic becomes rejectable, *even a brand-new article about the S23*,
-where both timestamps look perfectly current. That knowledge persists across
-runs and never moves backwards.
+Supersession does the real work: the bot learns product generations from what
+it sees, so one "Galaxy S25" headline makes every S23 topic rejectable — *even
+a brand-new article about the S23*, where both timestamps look current. That
+knowledge persists and never moves backwards.
 
-**They get demonetised.** YouTube's inauthentic-content policy (the July 2025
-rename of "repetitious content") targets mass-produced, templated, low-effort
-output, and enforcement has included channel termination. A generator that
-emits the same shell with the nouns swapped is exactly that pattern. So every
-script must carry a specific, falsifiable original claim, every factual
-assertion needs a dated source, and the
-[verifier](src/ootube/script/verify.py) fails the video rather than publishing
-one that does not. Uploads set `status.containsSyntheticMedia`, the API
-equivalent of the "altered or synthetic content" toggle.
-
-**They optimise for views.** Views are not revenue. RPM varies roughly 10x
-across verticals, so a B2B software video at 8k views can out-earn a gaming
-video at 100k. [Scoring](src/ootube/scoring.py) ranks by expected dollars:
+**Views are not revenue.** RPM varies roughly 10x across verticals, so a B2B
+software video at 8k views can out-earn a gaming video at 100k.
+[Scoring](src/ootube/scoring.py) ranks by expected dollars:
 
 ```
 expected_revenue = projected_views × monetized_rate × (RPM / 1000)
 ```
 
-## Quick start
-
-```bash
-pip install -e ".[publish,script,media]" edge-tts
-sudo apt-get install ffmpeg
-
-ootube doctor                 # what is configured, what is missing
-ootube trends                 # what is trending right now
-ootube plan                   # what it would make, and why it rejected the rest
-ootube run --dry-run          # build the videos without uploading
-ootube run                    # build, upload, schedule
-```
-
-`ootube plan` is the one to read first. It shows the selected topics with
-their projected revenue *and* a breakdown of every rejection by rule, which
-answers the question that otherwise needs a debugging session: why didn't it
-publish anything today?
+**Thin scripts.** Every script must carry a specific, falsifiable original
+claim and date every factual assertion to a source. The
+[verifier](src/ootube/script/verify.py) fails the draft rather than handing you
+something not worth cutting — it also rejects templated filler ("in today's
+video", "let's dive in") outright.
 
 ## Commands
 
 | Command | Does |
 |---|---|
-| `ootube trends` | Fetch and display current signals, plus learned product generations |
-| `ootube plan` | Dry planning: selections, projected revenue, rejection reasons |
-| `ootube run` | Full pipeline. `--dry-run` to skip upload, `--limit N` to cap |
-| `ootube status` | Scheduled queue, quota spend, recent runs |
-| `ootube approve` | Review videos held for human approval |
-| `ootube doctor` | Check config, credentials and binaries without spending quota |
+| `ootube trends` | Current signals, plus learned product generations |
+| `ootube plan` | What it would draft, projected revenue, rejection reasons |
+| `ootube run` | Draft edit packages. Never uploads |
+| `ootube drafts` | Packages waiting to be cut, flagged if going stale |
+| `ootube publish <key> --video <file>` | Upload your edited export |
+| `ootube discard <key>` | Drop a draft you will not use |
+| `ootube status` | Drafts, scheduled queue, quota, recent runs |
+| `ootube doctor` | Check config and credentials without spending quota |
 | `ootube auth` | One-time OAuth; prints the refresh token for CI |
 
-## How it stays low-maintenance
+## Operational notes
 
-- **Scheduled, not immediate.** Videos upload private with a future
-  `publishAt`. The public cadence is independent of when the bot runs.
-- **A queue buffer.** It keeps several days of videos scheduled ahead. If a run
-  fails or a key expires, the channel keeps publishing while you fix it.
-- **Quota-aware.** Spend is tracked locally and checked before each call, with
-  a reserve so a part-finished video can still complete. Costs are config, not
-  constants, because Google has changed them.
+- **Drafting is throttled by your editing.** A run counts unedited drafts and
+  stops when the backlog is full. Drafting faster than you cut just produces
+  stale packages — a topic current on Monday is not on Friday, and `ootube
+  drafts` flags anything over 72 hours old.
+- **A topic is never drafted twice.** Dedupe covers published *and* drafted
+  topics, including ones you discarded.
+- **Chapters come from your final cut**, not the rough assembly, so they match
+  whatever you actually exported.
 - **Degrades instead of failing.** A dead trend source returns nothing rather
-  than raising; a missing b-roll clip becomes a generated card; one bad topic
-  fails alone and the run continues.
-- **Fails closed on quality.** A script that cannot be verified is dropped. A
-  skipped video costs one slot; a wrong one costs channel trust.
-- **Self-reporting.** Failed runs open (and reuse) a single GitHub issue.
-
-## Configuration
-
-Everything tunable is in [`config/`](config/) — no code changes to re-aim the
-channel:
-
-- [`niches.yaml`](config/niches.yaml) — verticals, RPM estimates, keywords,
-  source feeds. Niche choice dominates every other revenue lever.
-- [`channel.yaml`](config/channel.yaml) — freshness thresholds, scoring
-  weights, publishing cadence, quota budget, voice and render settings.
-
-Secrets come from the environment and are never stored in config.
-
-## Automation
-
-[`.github/workflows/publish.yml`](.github/workflows/publish.yml) runs twice
-daily. State — what has been published, quota spent, generations learned —
-persists on an orphan `bot-state` branch between runs.
+  than raising; missing footage becomes a marked gap; one bad topic fails alone.
+- Costs and quota are config, not constants, because Google has changed them.
 
 ## Documentation
 
+- [Editing](docs/EDITING.md) — the Premiere workflow in detail
 - [Setup](docs/SETUP.md) — API keys, OAuth, first run
-- [Revenue](docs/REVENUE.md) — how monetisation actually works, niche economics
-- [Compliance](docs/COMPLIANCE.md) — staying inside YouTube's AI content policy
+- [Revenue](docs/REVENUE.md) — how monetisation actually works
+- [Compliance](docs/COMPLIANCE.md) — YouTube's AI content policy
 
 ## Tests
 
 ```bash
-pytest -q     # 134 tests, fully offline
+pytest -q     # 175 tests, fully offline
 ```
-
-The suite runs the real chain end to end — including actual ffmpeg renders —
-with only network boundaries stubbed.
 
 ## Honest limitations
 
+- **The XML has not been opened in Premiere by me.** It is validated
+  structurally — integer frames, file dedup, audio sourcetracks, encoded path
+  URLs — and written to the schema Premiere documents, but I have no Premiere
+  licence to confirm the import. The EDL exists as a fallback for exactly this
+  reason. Please report what happens.
+- **Caption and cut-point timings are interpolated** within each measured
+  section, since most TTS providers do not return word boundaries. Close, not
+  frame-accurate.
 - **Topic clustering is lexical.** It merges rephrasings but not rewordings:
   "Fed cuts rates by 50 basis points" and "Fed delivers 50bp cut" are one story
-  to a reader and two here. The cost is a duplicate topic, mostly absorbed by
-  the near-duplicate check. Sentence embeddings would close it.
-- **Competition is estimated, not measured.** Measuring it properly means
-  `search.list` at 100 quota units per call against a 100-call daily cap, which
-  would spend the entire search budget on ranking.
-- **RPM figures are planning estimates** until the channel has its own
-  analytics history to calibrate against.
-- **This does not make monetisation automatic.** See
-  [docs/REVENUE.md](docs/REVENUE.md) — the Partner Program has thresholds, and
-  a fully hands-off channel is the exact profile YouTube scrutinises.
+  to a reader and two here.
+- **Competition is estimated, not measured** — measuring it means `search.list`
+  at 100 quota units per call against a 100-call daily cap.
+- **RPM figures are planning estimates** until you have your own analytics.

@@ -1,42 +1,35 @@
-name: publish
+name: draft
 
-# Twice daily. Uploads land as private videos with a future publishAt, so the
-# channel's public cadence does not depend on when this workflow happens to
-# run - or on it running at all on a given day, since the queue holds several
-# days of scheduled videos.
+# Drafts edit packages and uploads them as build artifacts. It never publishes:
+# publishing happens after a human has cut the video.
+#
+# Running this in CI is optional. The natural home for an editing workflow is
+# your own machine, where the footage lands straight in your Premiere scratch
+# folder. CI is for keeping drafts flowing while you are away from it.
 on:
   schedule:
     - cron: "0 12 * * *"   # 08:00 America/New_York (EDT)
-    - cron: "0 20 * * *"   # 16:00 America/New_York (EDT)
   workflow_dispatch:
     inputs:
       limit:
-        description: "Max videos to produce this run"
+        description: "Max packages to draft"
         required: false
         default: ""
-      dry_run:
-        description: "Produce videos but do not upload"
-        type: boolean
-        default: false
 
 concurrency:
-  # Two overlapping runs would double-book publish slots and burn quota twice.
-  group: ootube-publish
+  group: ootube-draft
   cancel-in-progress: false
 
 permissions:
   contents: write
 
 jobs:
-  publish:
+  draft:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
-      # State (what has been published, quota spent, product generations
-      # learned) lives on an orphan branch so it survives across runs without
-      # cluttering the code history.
       - name: Restore bot state
         run: |
           git config user.name "ootube-bot"
@@ -63,34 +56,20 @@ jobs:
       - name: Install ootube
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[publish,script,media]" edge-tts
+          pip install -e ".[script,media]" edge-tts
 
-      - name: Preflight
+      - name: Draft
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
-          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
-          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
-        run: ootube doctor
-
-      - name: Run
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
-          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
-          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
         run: |
           ARGS=""
-          if [ -n "${{ inputs.limit }}" ]; then ARGS="$ARGS --limit ${{ inputs.limit }}"; fi
-          if [ "${{ inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+          if [ -n "${{ inputs.limit }}" ]; then ARGS="--limit ${{ inputs.limit }}"; fi
           ootube run $ARGS --json | tee run-report.json
 
       - name: Save bot state
-        # Runs even on failure: quota already spent must still be recorded, or
-        # the next run will overspend against a stale count.
         if: always()
         run: |
           if [ ! -f data/ootube.db ]; then exit 0; fi
@@ -104,15 +83,17 @@ jobs:
           git commit -m "state: $(date -u +%Y-%m-%dT%H:%M:%SZ)" || exit 0
           git push -f origin bot-state-tmp:bot-state
 
-      - name: Upload run artifacts
+      # The whole package, so it can be opened in an NLE after download.
+      # B-roll makes these large; keep retention short.
+      - name: Upload edit packages
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: run-${{ github.run_id }}
+          name: edit-packages-${{ github.run_id }}
           path: |
+            out/**
             run-report.json
-            out/**/script.json
-          retention-days: 14
+          retention-days: 7
           if-no-files-found: ignore
 
       - name: Report failure
@@ -120,9 +101,7 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            // One open issue, reused. A new issue per failed run would bury
-            // the signal under duplicates.
-            const title = "ootube: publish run failing";
+            const title = "ootube: draft run failing";
             const body = `Run [${context.runId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) failed at ${new Date().toISOString()}.`;
             const existing = await github.rest.issues.listForRepo({
               owner: context.repo.owner, repo: context.repo.repo,

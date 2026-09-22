@@ -137,6 +137,11 @@ class TopicSelector:
         if self.store.is_published(topic.fingerprint):
             return Verdict(False, "already published", "duplicate")
 
+        # A drafted package waits in the output folder until someone edits it.
+        # Re-selecting the topic would pay for the script and footage twice.
+        if self.store.has_draft(topic.fingerprint):
+            return Verdict(False, "already drafted and awaiting edit", "already_drafted")
+
         # Near-duplicate of something recent, even if the wording differs.
         from .aggregate import similarity
 

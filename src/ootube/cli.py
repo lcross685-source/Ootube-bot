@@ -15,7 +15,7 @@ import logging
 import os
 import shutil
 import sys
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from .config import load_config
 from .models import utcnow
@@ -128,19 +128,99 @@ def cmd_run(args) -> int:
     print("\n" + report.summary())
     for note in report.notes:
         print(f"  note: {note}")
-    for item in report.published:
-        print(f"  published: {item['title']}")
-        print(f"     {item['url']}  publishes {item['scheduled_for']}")
-    for title in report.queued_for_approval:
-        print(f"  awaiting approval: {title}")
+
+    for item in report.drafted:
+        print(f"\n  {item['title']}")
+        print(f"    {item['minutes']} min rough cut, {item['sections']} sections"
+              f"  (est. ${item['expected_revenue_usd']} if published)")
+        print(f"    open:  {item['project']}")
+        print(f"    notes: {item['directory']}/EDIT_NOTES.md")
+        if item["missing_broll"] != "0":
+            print(f"    !! {item['missing_broll']} section(s) need footage")
+
+    if report.drafted:
+        print("\n  Next: import project.xml into Premiere (File > Import), cut it down,")
+        print("  export, then:  ootube publish <topic-key> --video <your-export.mp4>")
+
     for failure in report.failures:
         print(f"  FAILED {failure.get('topic', failure.get('stage'))}: {failure['error']}")
     if args.json:
         print(json.dumps(report.to_dict(), indent=2))
     store.close()
-    # Non-zero only when the run produced nothing but was supposed to, so CI
-    # surfaces a real outage without alerting on a legitimately quiet day.
-    return 1 if report.failures and not report.published else 0
+    return 1 if report.failures and not report.drafted else 0
+
+
+def cmd_drafts(args) -> int:
+    """List edit packages waiting to be cut."""
+    config = load_config(args.config_dir)
+    store = Store(config.db_path)
+    drafts = store.pending_drafts()
+    if not drafts:
+        print("\nNo drafts waiting. Run `ootube run` to make some.")
+        store.close()
+        return 0
+
+    print(f"\n{len(drafts)} draft(s) waiting to be edited:\n")
+    for row in drafts:
+        age = ""
+        drafted = row["drafted_at"]
+        try:
+            delta = utcnow() - datetime.fromisoformat(drafted)
+            hours = delta.total_seconds() / 3600
+            age = f"{hours:.0f}h old" if hours < 48 else f"{hours / 24:.0f}d old"
+            # Topic freshness decays fast; an old draft may no longer be current.
+            if hours > 72:
+                age += "  <- may be stale, check before publishing"
+        except (TypeError, ValueError):
+            pass
+        print(f"  {row['topic_key']}")
+        print(f"    {row['title'][:70]}")
+        print(f"    {row['duration_s'] / 60:.1f} min · {row['niche']} · {age}")
+        print(f"    {row['directory']}/project.xml")
+        if row["missing_broll"]:
+            print(f"    !! {row['missing_broll']} section(s) need footage")
+        print()
+    print("Publish one with:  ootube publish <topic-key> --video <export.mp4>")
+    store.close()
+    return 0
+
+
+def cmd_publish(args) -> int:
+    """Upload a finished, human-edited export."""
+    pipeline, store = _pipeline(args)
+    publish_at = None
+    if args.at:
+        try:
+            publish_at = datetime.fromisoformat(args.at)
+            if publish_at.tzinfo is None:
+                publish_at = publish_at.replace(tzinfo=timezone.utc)
+        except ValueError:
+            print(f"Could not parse --at {args.at!r}; expected ISO-8601.")
+            store.close()
+            return 2
+    try:
+        result = pipeline.publish_edited(
+            args.topic_key, args.video, publish_at=publish_at
+        )
+    except Exception as exc:  # noqa: BLE001 - surfaced to the operator
+        print(f"\nPublish failed: {exc}")
+        store.close()
+        return 1
+    print(f"\nUploaded: {result.url}")
+    print(f"Goes public: {result.scheduled_for.isoformat()}")
+    if result.dry_run:
+        print("(dry run - nothing was actually uploaded)")
+    store.close()
+    return 0
+
+
+def cmd_discard(args) -> int:
+    config = load_config(args.config_dir)
+    store = Store(config.db_path)
+    store.discard_draft(args.topic_key)
+    print(f"Discarded draft {args.topic_key}")
+    store.close()
+    return 0
 
 
 def cmd_status(args) -> int:
@@ -158,40 +238,15 @@ def cmd_status(args) -> int:
             flag = " [dry-run]" if row["dry_run"] else ""
             print(f"  {row['scheduled_for']}  {row['title'][:60]}{flag}")
 
-    pending = store.pending_approvals()
-    if pending:
-        print(f"\nAwaiting approval ({len(pending)}):")
-        for row in pending:
-            print(f"  {row['fingerprint'][:10]}  {row['title'][:60]}")
+    drafts = store.pending_drafts()
+    if drafts:
+        print(f"\nWaiting to be edited ({len(drafts)}):")
+        for row in drafts:
+            print(f"  {row['topic_key'][:34]:34} {row['duration_s'] / 60:4.1f}min  {row['title'][:40]}")
 
     print("\nRecent runs:")
     for row in store.recent_runs(8):
         print(f"  {row['finished_at'][:19]}  {row['stage']:8} {row['status']:14} {row['detail'][:60]}")
-    store.close()
-    return 0
-
-
-def cmd_approve(args) -> int:
-    config = load_config(args.config_dir)
-    store = Store(config.db_path)
-    pending = store.pending_approvals()
-    if not pending:
-        print("Nothing awaiting approval.")
-        store.close()
-        return 0
-    if args.list or not args.fingerprint:
-        for row in pending:
-            payload = json.loads(row["payload"] or "{}")
-            print(f"\n{row['fingerprint']}")
-            print(f"  title:   {row['title']}")
-            print(f"  niche:   {payload.get('niche')}")
-            print(f"  video:   {payload.get('video_path')}")
-            print(f"  publish: {payload.get('publish_at')}")
-        print("\nApprove with: ootube approve --fingerprint <id> [--reject]")
-        store.close()
-        return 0
-    store.decide_approval(args.fingerprint, "rejected" if args.reject else "approved")
-    print(f"{'Rejected' if args.reject else 'Approved'} {args.fingerprint}")
     store.close()
     return 0
 
@@ -293,20 +348,27 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--quiet-rejects", action="store_true")
     p.set_defaults(func=cmd_plan)
 
-    p = sub.add_parser("run", help="discover, produce and schedule videos")
+    p = sub.add_parser("run", help="draft edit packages for the best current topics")
     p.add_argument("--limit", type=int, default=None)
-    p.add_argument("--dry-run", action="store_true", help="produce videos but do not upload")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_run)
 
-    p = sub.add_parser("status", help="show queue, quota and recent runs")
-    p.set_defaults(func=cmd_status)
+    p = sub.add_parser("drafts", help="list edit packages waiting to be cut")
+    p.set_defaults(func=cmd_drafts)
 
-    p = sub.add_parser("approve", help="review videos held for human approval")
-    p.add_argument("--fingerprint")
-    p.add_argument("--reject", action="store_true")
-    p.add_argument("--list", action="store_true")
-    p.set_defaults(func=cmd_approve)
+    p = sub.add_parser("publish", help="upload a finished, human-edited export")
+    p.add_argument("topic_key", help="from `ootube drafts`")
+    p.add_argument("--video", required=True, help="your exported .mp4")
+    p.add_argument("--at", help="ISO-8601 publish time (default: next free slot)")
+    p.add_argument("--dry-run", action="store_true")
+    p.set_defaults(func=cmd_publish)
+
+    p = sub.add_parser("discard", help="drop a draft you are not going to use")
+    p.add_argument("topic_key")
+    p.set_defaults(func=cmd_discard)
+
+    p = sub.add_parser("status", help="show drafts, queue, quota and recent runs")
+    p.set_defaults(func=cmd_status)
 
     p = sub.add_parser("doctor", help="check configuration and credentials")
     p.set_defaults(func=cmd_doctor)

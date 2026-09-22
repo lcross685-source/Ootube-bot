@@ -174,6 +174,34 @@ class VideoAsset:
 
 
 @dataclass
+class EditPackage:
+    """An editor-ready folder: the first 80% of a cut.
+
+    The deliverable of a run. Rather than a finished file, it is a timeline
+    plus its source assets, so the edit stays editable in Premiere or Resolve.
+    """
+
+    topic_key: str
+    directory: str
+    project_xml: str = ""
+    project_edl: str = ""
+    captions: str = ""
+    notes: str = ""
+    metadata_path: str = ""
+    thumbnail_path: str = ""
+    preview_path: str = ""
+    audio_paths: list[str] = field(default_factory=list)
+    broll_paths: list[str] = field(default_factory=list)
+    duration_s: float = 0.0
+    section_count: int = 0
+    missing_broll: list[str] = field(default_factory=list)
+
+    @property
+    def needs_footage(self) -> bool:
+        return bool(self.missing_broll)
+
+
+@dataclass
 class PublishPlan:
     topic_key: str
     title: str

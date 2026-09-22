@@ -53,6 +53,41 @@ class TestPublished:
         assert "fed-cuts-rates" in store.recent_terms(days=30)
 
 
+class TestDrafts:
+    def test_records_and_finds_a_draft(self, store):
+        from ootube.models import EditPackage
+        t = topic()
+        store.record_draft(t, "A title", EditPackage(topic_key=t.key, directory="/tmp/x"))
+        assert store.pending_draft_count() == 1
+        assert store.get_draft(t.key)["title"] == "A title"
+        assert store.topic_status(t.fingerprint) == "drafted"
+
+    def test_has_draft_blocks_redrafting(self, store):
+        """A pending draft must stop the topic being selected again."""
+        from ootube.models import EditPackage
+        t = topic()
+        assert not store.has_draft(t.fingerprint)
+        store.record_draft(t, "T", EditPackage(topic_key=t.key, directory="/tmp/x"))
+        assert store.has_draft(t.fingerprint)
+
+    def test_discarded_draft_still_blocks(self, store):
+        """The operator already said no; do not re-offer the topic."""
+        from ootube.models import EditPackage
+        t = topic()
+        store.record_draft(t, "T", EditPackage(topic_key=t.key, directory="/tmp/x"))
+        store.discard_draft(t.key)
+        assert store.pending_draft_count() == 0
+        assert store.has_draft(t.fingerprint)
+
+    def test_publishing_clears_it_from_pending(self, store):
+        from ootube.models import EditPackage
+        t = topic()
+        store.record_draft(t, "T", EditPackage(topic_key=t.key, directory="/tmp/x"))
+        store.mark_draft_published(t.key)
+        assert store.pending_draft_count() == 0
+        assert store.get_draft(t.key)["status"] == "published"
+
+
 class TestQuota:
     def test_accumulates(self, store):
         store.add_quota(units=100, upload_calls=1)
@@ -85,15 +120,6 @@ class TestGenerations:
         reopened = Store(config.db_path)
         assert reopened.latest_generation("iphone") == 17
         reopened.close()
-
-
-class TestApprovals:
-    def test_queue_and_decide(self, store):
-        t = topic()
-        store.queue_approval(t, "A title", {"video_path": "/tmp/v.mp4"})
-        assert len(store.pending_approvals()) == 1
-        store.decide_approval(t.fingerprint, "approved")
-        assert store.pending_approvals() == []
 
 
 def test_run_log(store):

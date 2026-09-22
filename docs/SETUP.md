@@ -78,43 +78,44 @@ Work up in stages rather than going straight to `run`:
 ```bash
 ootube trends                 # are the sources returning anything?
 ootube plan                   # what would it pick, and why reject the rest?
-ootube run --dry-run --limit 1   # build one video, no upload
+ootube run --limit 1          # draft one edit package
 ```
 
-`--dry-run` writes to `out/<topic>/`. **Watch the video before you let it
-upload anything.** Check that the narration is accurate, the pacing works, and
-nothing reads as templated.
+Then open `out/<topic>/project.xml` in Premiere and read
+`out/<topic>/EDIT_NOTES.md`. See [EDITING.md](EDITING.md) for the full
+workflow.
 
-When you are satisfied:
+Nothing has touched YouTube at this point — `run` never uploads. When you have
+cut and exported something you are happy with:
 
 ```bash
-ootube run --limit 1
+ootube publish <topic-key> --video ~/exports/final.mp4
 ```
 
-It uploads as *private* with a scheduled `publishAt`, so you can still review
-it in YouTube Studio before it goes public.
+It uploads *private* with a scheduled publish time, so you can still review it
+in YouTube Studio before it goes public.
 
 ## 6. Automate
 
-Add the secrets under **Settings → Secrets and variables → Actions**, then
-enable [`.github/workflows/publish.yml`](../.github/workflows/publish.yml).
-It runs twice daily and persists state on a `bot-state` branch.
+Automation is **optional here**, and less useful than it was for a fully
+automated channel: if you are editing in Premiere on your own machine, running
+the bot there puts the footage straight where you need it.
 
-Keep the approval gate on until you trust the output:
+CI is for keeping drafts flowing while you are away from your edit machine.
+[`.github/workflows/draft.yml`](../.github/workflows/draft.yml) drafts packages
+daily and uploads them as build artifacts to download. It never publishes.
 
-```yaml
-channel:
-  require_human_approval: true
-```
-
-Then `ootube approve --list` shows what is waiting, and
-`ootube approve --fingerprint <id>` releases it.
+Add secrets under **Settings → Secrets and variables → Actions**. Note that
+`YOUTUBE_*` secrets are not needed for drafting — only for `ootube publish`,
+which you run locally.
 
 ## Troubleshooting
 
 | Symptom | Cause |
 |---|---|
 | `ootube plan` selects nothing | Normal on a quiet day. The rejection breakdown says which rule fired. |
+| `run` drafts nothing, no rejections | Backlog is full. Edit or `ootube discard` what is waiting. |
+| XML will not import | See [EDITING.md](EDITING.md#if-the-xml-will-not-import). |
 | Everything rejected `no_event_date` | Sources are not returning dates. Check `ootube trends` — undated feeds cannot pass the news gate. |
 | `quotaExceeded` | Check `ootube status`. Reduce `videos_per_day` or request more quota. |
 | Token expires weekly | OAuth consent screen is in *Testing*. Publish it, or add yourself as a test user. |

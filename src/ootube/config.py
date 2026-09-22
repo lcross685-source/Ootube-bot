@@ -127,6 +127,14 @@ class MediaConfig:
     output_dir: str = "out"
     broll_provider: str = "pexels"
     music_volume: float = 0.06
+    # --- edit-package settings ---
+    #: Pad between narration sections on the timeline. Small on purpose: a gap
+    #: that already exists is easier to close than one you have to create.
+    section_gap_s: float = 0.35
+    #: Drop a marker at each sentence boundary as a suggested cut point.
+    sentence_markers: bool = True
+    #: Render a watchable rough cut alongside the project file.
+    render_preview: bool = False
 
 
 @dataclass
@@ -151,7 +159,6 @@ class ChannelConfig:
     default_language: str = "en"
     made_for_kids: bool = False
     contains_synthetic_media: bool = True
-    require_human_approval: bool = False
     description_footer: str = ""
     niches: list[NicheConfig] = field(default_factory=list)
 
