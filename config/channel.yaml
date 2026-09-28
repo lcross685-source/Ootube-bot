@@ -99,7 +99,8 @@ script:
   provider: anthropic
   model: claude-opus-5
   max_tokens: 8000
-  temperature: 0.7
+  # Thinking depth: low | medium | high | xhigh | max
+  effort: high
   min_words: 450
   max_words: 1400
   require_original_analysis: true

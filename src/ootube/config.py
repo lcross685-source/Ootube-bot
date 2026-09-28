@@ -142,7 +142,10 @@ class ScriptConfig:
     provider: str = "anthropic"
     model: str = "claude-opus-5"
     max_tokens: int = 8000
-    temperature: float = 0.7
+    #: Thinking depth and token spend: low | medium | high | xhigh | max.
+    #: Replaces the old `temperature` knob, which current Claude models
+    #: reject outright - sampling parameters were removed from the API.
+    effort: str = "high"
     min_words: int = 450
     max_words: int = 1400
     require_original_analysis: bool = True

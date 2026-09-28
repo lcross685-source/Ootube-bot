@@ -49,34 +49,56 @@ def _blocks(script: Script) -> list[tuple[str, str]]:
 def _claim_markers(
     script: Script, spoken: list[SpokenClip], fps: int
 ) -> list[tuple[int, str]]:
-    """Place a CITE marker where each claim's wording appears in narration.
+    """Place a CITE marker where each claim is actually made.
 
-    Falls back to distributing unmatched claims across the timeline: a marker
-    in roughly the right place still beats no marker, and the edit notes carry
-    the full list either way.
+    Two things make the naive "best keyword overlap" version useless in
+    practice. The hook restates the whole video, so it out-scores every real
+    section and collects every claim at 00:00:00:00; and several claims often
+    match the same section, stacking markers on one frame. So the hook is
+    excluded from matching, and each section takes at most one claim before
+    later claims fall through to their next-best section.
     """
-    markers: list[tuple[int, str]] = []
-    unmatched: list[str] = []
+    # The hook is a summary of everything, so it matches everything.
+    candidates = [c for c in spoken if c.heading.lower() != "hook"] or list(spoken)
 
+    scored: list[tuple[str, list[tuple[int, SpokenClip]]]] = []
     for claim in script.claims:
-        label = f"{claim.text[:90]} — {claim.source_url or 'NO SOURCE'}"
+        label = f"{claim.text[:90]} - {claim.source_url or 'NO SOURCE'}"
         key_words = {w.lower().strip(".,;:") for w in claim.text.split() if len(w) > 5}
-        best, best_score = None, 0
-        for clip in spoken:
-            words = {w.lower().strip(".,;:") for w in clip.text.split()}
-            score = len(key_words & words)
-            if score > best_score:
-                best, best_score = clip, score
-        if best is not None and best_score >= 2:
-            markers.append((to_frames(best.start, fps), label))
-        else:
-            unmatched.append(label)
+        ranked = sorted(
+            (
+                (len(key_words & {w.lower().strip(".,;:") for w in clip.text.split()}), clip)
+                for clip in candidates
+            ),
+            key=lambda pair: -pair[0],
+        )
+        scored.append((label, ranked))
 
-    if unmatched and spoken:
-        span = max(1, len(spoken))
-        for i, label in enumerate(unmatched):
-            clip = spoken[min(span - 1, i % span)]
-            markers.append((to_frames(clip.start, fps), label))
+    markers: list[tuple[int, str]] = []
+    used: set[int] = set()
+    leftovers: list[tuple[str, list[tuple[int, SpokenClip]]]] = []
+
+    for label, ranked in scored:
+        placed = False
+        for score, clip in ranked:
+            if score >= 2 and clip.index not in used:
+                markers.append((to_frames(clip.start, fps), label))
+                used.add(clip.index)
+                placed = True
+                break
+        if not placed:
+            leftovers.append((label, ranked))
+
+    # Anything unplaced goes to its best remaining section, then round-robin,
+    # so a claim always gets a marker somewhere sensible.
+    for i, (label, ranked) in enumerate(leftovers):
+        target = next(
+            (clip for score, clip in ranked if clip.index not in used),
+            candidates[i % len(candidates)] if candidates else None,
+        )
+        if target is not None:
+            markers.append((to_frames(target.start, fps), label))
+            used.add(target.index)
     return markers
 
 

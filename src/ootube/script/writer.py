@@ -76,10 +76,13 @@ class ScriptWriter:
         cfg = self.config.script
 
         client = self._client_or_raise()
+        # Current Claude models removed the sampling parameters: passing
+        # `temperature` is rejected. Depth is controlled by effort instead,
+        # and thinking runs adaptively by default.
         response = client.messages.create(
             model=cfg.model,
             max_tokens=cfg.max_tokens,
-            temperature=cfg.temperature,
+            output_config={"effort": cfg.effort},
             system=build_system_prompt(niche, now),
             messages=[
                 {"role": "user", "content": build_user_prompt(topic, niche, self.config, now)}
